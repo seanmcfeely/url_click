@@ -1,2 +1,4 @@
 *.log
 *.old
+splunk.ini
+url_clicks.search
