@@ -19,6 +19,12 @@ from cloudphishlib import cloudphish
 CONFIG = None
 HOME_DIR = os.path.realpath(os.path.dirname(__file__))
 
+if not os.path.isdir(os.path.join(HOME_DIR, 'log')):
+    try:
+        os.mkdir('log')
+    except Exception as e:
+        raise Exception(str(e))
+
 logging_config_path = os.path.join(HOME_DIR, 'etc', 'logging.ini')
 logging.config.fileConfig(logging_config_path)
 logging.getLogger('urllib3.connectionpool').setLevel(logging.ERROR)
