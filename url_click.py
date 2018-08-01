@@ -46,10 +46,13 @@ def search_splunk(config_path, search_path):
         # first run or Exception logged above
         start_time = (datetime.now() - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
     
+    splunk_search_command_text = "/opt/splunklib/splunk.py -i -s '{}' -c '{}' --search-file '{}' --json".format(start_time, config_path, search_path)
     try:
-        results = subprocess.check_output(['/opt/splunklib/splunk', '-i', '-s', start_time, '-c', config_path, '--search-file', search_path, '--json']).decode('utf-8')
-    except:
-        logging.exception('Unable to query Splunk.')
+        logging.debug("Searching splunk with: '{}'".format(splunk_search_command_text))
+        results = subprocess.check_output(['/opt/splunklib/splunk.py', '-i', '-s', start_time, '-c', config_path, '--search-file', search_path, '--json']).decode('utf-8')
+    except Exception as e:
+        logging.exception('Unable to query Splunk: {}'.format(str(e)))
+        sys.exit(1)
 
     # Try converting the results to JSON.
     try:
