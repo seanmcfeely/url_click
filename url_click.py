@@ -1,44 +1,53 @@
 #!/usr/bin/env python3
 
 import os
+import sys
 import time
+import json
+import subprocess
 import logging, logging.config
-'''
-1. Import splunk search and SearchDaemon it
-2. Modify the hunt to comply with our normal splunk hunt formats (ini & search file)
-3. set up directory structure
-4. Create method for submiting the hunt search results to cloudphish. User the requests library
-    4.1. Alert on cloudphish 'ALERT' results
-    4.2. Wait/query loop cloudphish for 'UNKNOWN' results
-    4.3. Write error is cloudphis returns error
-5. Log everything
-'''
+
+from configparser import ConfigParser
+from datetime import datetime, timedelta
+
+# load lib/ onto the python path
+sys.path.append('lib')
+
+from saq.client import Alert
+from cloudphishlib import cloudphish
 
 CONFIG = None
 HOME_DIR = os.path.realpath(os.path.dirname(__file__))
 
 logging_config_path = os.path.join(HOME_DIR, 'etc', 'logging.ini')
 logging.config.fileConfig(logging_config_path)
-logger = logging.getLogger('url_click')
+logging.getLogger('urllib3.connectionpool').setLevel(logging.ERROR)
+logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
-import json
-from datetime import datetime, timedelta
-import subprocess
 
 ''' TODO: remove subprocess, and use splunklib to perform the splunk search '''
 def search_splunk(config_path, search_path):
-    logger.info('Searching for CB command line URLs in Splunk with search: {}'.format(config_path))
+    logger.info('Searching for CB command line URLs in Splunk with search: {}'.format(search_path))
 
     clicks = []
 
-    #start_time = (datetime.now() - timedelta(minutes=15)).strftime("%Y-%m-%d %H:%M:%S")
+    start_time = CONFIG['url_click']['last_search_time']
+    try:
+        datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S")
+    except Exception as e:
+        logger.error("Incorrect datetime format on last_search_time. Processing as-if None")
+        start_time = None
 
-    start_time = '2018-07-11 08:20:05'
-    end_time = '2018-07-11 08:50:05'
+    if not start_time:
+        # first run or Exception logged above
+        start_time = (datetime.now() - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+    
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    CONFIG['url_click']['last_search_time'] = current_time
 
     try:
-        results = subprocess.check_output(['/opt/splunklib/splunk', '-i', '-s', start_time, '-e', end_time, '-c', config_path, '--search-file', search_path, '--json']).decode('utf-8')
+        results = subprocess.check_output(['/opt/splunklib/splunk', '-i', '-s', start_time, '-c', config_path, '--search-file', search_path, '--json']).decode('utf-8')
     except:
         logger.exception('Unable to query Splunk.')
 
@@ -48,7 +57,7 @@ def search_splunk(config_path, search_path):
     except:
         logger.exception('Unable to convert Splunk results to JSON.')
 
-    # Loop over the carbonblack process results.
+    # build our data structure
     for cb_proc in j['result']:
 
         details = {'url': cb_proc['clicked_url'],
@@ -60,12 +69,12 @@ def search_splunk(config_path, search_path):
         
         clicks.append(details)
 
+    # update the config file with the new search time
+    with open(config_path, 'w') as f:
+        CONFIG.write(f)
+
     return clicks
 
-# load lib/ onto the python path
-sys.path.append('lib')
-
-from saq.client import Alert
 
 def create_ace_alert(click):
     logger.info("here we create an ace alert")
@@ -75,9 +84,9 @@ def create_ace_alert(click):
         alert_type='splunk - cb - cloudphish',
         desc='URL Click',
         event_time=time.strftime("%Y-%m-%d %H:%M:%S"),
-        details=event_grouping[key_value],
+        details=None,
         name='URL Click',
-        company_name=CONFIG['ace']['company_name'],
+        company_name=CONFIG.get('ace', 'company_name'),
         company_id=CONFIG['ace'].getint('company_id'))
 
     tags = ['cloudphish_detection','cb_cmdline']
@@ -90,80 +99,63 @@ def create_ace_alert(click):
     alert.add_observable('url', click['url'])
 
     try:
-        logging.info("submitting alert {}".format(alert.description))
+        logger.info("submitting alert {}".format(alert.description))
         alert.submit(CONFIG['ace']['uri'], CONFIG['ace']['key'])
     except Exception as e:
-        logging.error("unable to submit alert {}: {}".format(alert, str(e)))
+        logger.error("unable to submit alert {}: {}".format(alert, str(e)))
 
     return
 
-'''
-{
-    "analysis_result": "PASS",
-    "details": null,
-    "file_name": null,
-    "http_message": "COMMON_NETWORK",
-    "http_result": null,
-    "location": null,
-    "result": "OK",
-    "sha256_content": null,
-    "status": "ANALYZED"
-}
-'''
+
 def check_cloudphish(clicks):
     cp = cloudphish()
 
+    total_clicks = len(clicks)
+   
     while clicks:
-        logger.info("{} clicks to process".format(len(clicks)))
+        analyzed_clicks = []
+        clicks_to_process = len(clicks)
+        counter = 0
         for click in clicks:
             result = cp.submit(click['url'])
-            logger.debug("{} - {} - {} - {}".format(result['status'], result['analysis_result'], result['http_message'], click['url']))
+            logger.info("({}/{} clicks) {} - {} - {} - {}".format(clicks_to_process-counter, total_clicks, result['status'], result['analysis_result'], result['http_message'], click['url']))
             if result['analysis_result'] == 'UNKNOWN' and result['status'] == 'NEW':
                 # cloudphish is still working on this one
                 continue
             elif result['analysis_result'] == 'ALERT':
                 create_ace_alert(click)
-            else:
-                logger.info("removing {} from the queue".format(click['url']))
                 clicks.remove(click)
+            else:
+                logger.debug("removing {} from the queue".format(click['url']))
+                analyzed_clicks.append(click)
+            counter+=1
+
+        #remove analyzed clicks
+        clicks = [click for click in clicks if click not in analyzed_clicks]
 
         # if we're still waiting for cloudphish results for some clicks, give cloudphish 5 seconds
         if len(clicks) > 0:
             time.sleep(5)
 
 
-from configparser import ConfigParser
+if __name__ == '__main__':
+    logger.info("STARTING job at '{}'".format(datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
 
-# load the config
-config_path = os.path.join(HOME_DIR, 'etc', 'config.ini')
-CONFIG = ConfigParser()
-CONFIG.read(config_path)
+    # load the config
+    config_path = os.path.join(HOME_DIR, 'etc', 'config.ini')
+    CONFIG = ConfigParser()
+    CONFIG.read(config_path)
 
-search_name = CONFIG.get('url_click', 'splunk_search')
-search_path = os.path.join(HOME_DIR, 'etc', search_name)
+    search_name = CONFIG.get('url_click', 'splunk_search')
+    search_path = os.path.join(HOME_DIR, 'lib', search_name)
 
+    click_results = search_splunk(config_path, search_path)
 
-results = search_splunk(config_path, search_path)
+    # ignore the proxy
+    if 'https_proxy' in os.environ:
+        del os.environ['https_proxy']
 
-from cloudphishlib import cloudphish
+    check_cloudphish(click_results)
 
+    logger.info("Job COMPLETED at '{}'".format(datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
 
-# ignore the proxy
-if 'https_proxy' in os.environ:
-    del os.environ['https_proxy']
-
-check_cloudphish(results)
-
-#cp = cloudphish()
-
-'''
-print(cp.clear('http://newslmemorialschool.com/adminstrator/index.htm'))
-print(cp.get('6FD093AF3E00D13A13BC3AD3FD64459D20BA20826777E6F9C7B073AABCCB1649'))
-print(cp.clear('https://1drv.ms/b/s!AlYlCBTNU8uKgXeQfpyMyfECq6JG'))
-print(cp.get('6FD093AF3E00D13A13BC3AD3FD64459D20BA20826777E6F9C7B073AABCCB1649'))
-
-
-for result in results:
-      print(cp.submit(result['url']))
-      break
-'''
