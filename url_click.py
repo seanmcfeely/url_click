@@ -19,49 +19,43 @@ from cloudphishlib import cloudphish
 CONFIG = None
 HOME_DIR = os.path.realpath(os.path.dirname(__file__))
 
-if not os.path.isdir(os.path.join(HOME_DIR, 'log')):
-    try:
-        os.mkdir('log')
-    except Exception as e:
-        raise Exception(str(e))
-
-logging_config_path = os.path.join(HOME_DIR, 'etc', 'logging.ini')
-logging.config.fileConfig(logging_config_path)
-logging.getLogger('urllib3.connectionpool').setLevel(logging.ERROR)
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-
 
 ''' TODO: remove subprocess, and use splunklib to perform the splunk search '''
 def search_splunk(config_path, search_path):
-    logger.info('Searching for CB command line URLs in Splunk with search: {}'.format(search_path))
+    logging.info('Searching for CB command line URLs in Splunk with search: {}'.format(search_path))
 
     clicks = []
 
-    start_time = CONFIG['url_click']['last_search_time']
-    try:
-        datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S")
-    except Exception as e:
-        logger.error("Incorrect datetime format on last_search_time. Processing as-if None")
-        start_time = None
+    start_time = None
+    start_time_file = os.path.join(HOME_DIR, 'var', 'last_search_time')
+    if not os.path.exists(os.path.join(start_time_file)):
+        start_time = (datetime.now() - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+        with open(start_time_file, 'w') as f:
+            f.write(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    else:
+        try:
+            with open(start_time_file, 'r') as f:
+                start_time = f.read()
+            datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S")
+            with open(start_time_file, 'w') as f:
+                f.write(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        except Exception as e:
+            logging.error(str(e))
 
     if not start_time:
         # first run or Exception logged above
         start_time = (datetime.now() - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
     
-    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    CONFIG['url_click']['last_search_time'] = current_time
-
     try:
         results = subprocess.check_output(['/opt/splunklib/splunk', '-i', '-s', start_time, '-c', config_path, '--search-file', search_path, '--json']).decode('utf-8')
     except:
-        logger.exception('Unable to query Splunk.')
+        logging.exception('Unable to query Splunk.')
 
     # Try converting the results to JSON.
     try:
         j = json.loads(results)
     except:
-        logger.exception('Unable to convert Splunk results to JSON.')
+        logging.exception('Unable to convert Splunk results to JSON.')
 
     # build our data structure
     for cb_proc in j['result']:
@@ -75,20 +69,16 @@ def search_splunk(config_path, search_path):
         
         clicks.append(details)
 
-    # update the config file with the new search time
-    with open(config_path, 'w') as f:
-        CONFIG.write(f)
-
     return clicks
 
 
 def create_ace_alert(click):
-    logger.info("here we create an ace alert")
+    logging.info("here we create an ace alert")
     alert = Alert(
         tool='url_click',
         tool_instance='Cb cmdline URL Cloudphish checker',
         alert_type='splunk - cb - cloudphish',
-        desc='URL Click',
+        desc='CB URL Click - Cloudphish Detection',
         event_time=time.strftime("%Y-%m-%d %H:%M:%S"),
         details=None,
         name='URL Click',
@@ -105,10 +95,10 @@ def create_ace_alert(click):
     alert.add_observable('url', click['url'])
 
     try:
-        logger.info("submitting alert {}".format(alert.description))
+        logging.info("submitting alert {}".format(alert.description))
         alert.submit(CONFIG['ace']['uri'], CONFIG['ace']['key'])
     except Exception as e:
-        logger.error("unable to submit alert {}: {}".format(alert, str(e)))
+        logging.error("unable to submit alert {}: {}".format(alert, str(e)))
 
     return
 
@@ -124,7 +114,7 @@ def check_cloudphish(clicks):
         counter = 0
         for click in clicks:
             result = cp.submit(click['url'])
-            logger.info("({}/{} clicks) {} - {} - {} - {}".format(clicks_to_process-counter, total_clicks, result['status'], result['analysis_result'], result['http_message'], click['url']))
+            logging.info("({}/{} clicks) {} - {} - {} - {}".format(clicks_to_process-counter, total_clicks, result['status'], result['analysis_result'], result['http_message'], click['url']))
             if result['analysis_result'] == 'UNKNOWN' and result['status'] == 'NEW':
                 # cloudphish is still working on this one
                 continue
@@ -132,7 +122,7 @@ def check_cloudphish(clicks):
                 create_ace_alert(click)
                 clicks.remove(click)
             else:
-                logger.debug("removing {} from the queue".format(click['url']))
+                logging.debug("removing {} from the queue".format(click['url']))
                 analyzed_clicks.append(click)
             counter+=1
 
@@ -145,7 +135,23 @@ def check_cloudphish(clicks):
 
 
 if __name__ == '__main__':
-    logger.info("STARTING job at '{}'".format(datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+
+    for path in [os.path.join(HOME_DIR, x) for x in ['log', 'var']]:
+        if not os.path.isdir(path):
+            try:
+                os.mkdir(path)
+            except Exception as e:
+                raise Exception(str(e))
+
+    # turn on logging
+    logging_config_path = os.path.join(HOME_DIR, 'etc', 'logging.ini')
+    logging.config.fileConfig(logging_config_path)
+    #logging.getLogger('urllib3.connectionpool').setLevel(logging.ERROR)
+    #logging.getLogger()
+    #logger.setLevel(logging.DEBUG)
+
+
+    logging.info("STARTING job at '{}'".format(datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
 
     # load the config
     config_path = os.path.join(HOME_DIR, 'etc', 'config.ini')
@@ -163,5 +169,5 @@ if __name__ == '__main__':
 
     check_cloudphish(click_results)
 
-    logger.info("Job COMPLETED at '{}'".format(datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+    logging.info("Job COMPLETED at '{}'".format(datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
 
