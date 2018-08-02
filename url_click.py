@@ -10,15 +10,16 @@ import logging, logging.config
 from configparser import ConfigParser
 from datetime import datetime, timedelta
 
+
+CONFIG = None
+HOME_DIR = os.path.realpath(os.path.dirname(__file__))
+os.chdir(HOME_DIR)
+
 # load lib/ onto the python path
 sys.path.append('lib')
 
 from saq.client import Alert
 from cloudphishlib import cloudphish
-
-CONFIG = None
-HOME_DIR = os.path.realpath(os.path.dirname(__file__))
-
 
 ''' TODO: remove subprocess, and use splunklib to perform the splunk search '''
 def search_splunk(config_path, search_path):
