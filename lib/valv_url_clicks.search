@@ -13,6 +13,7 @@ index=carbonblack CORPVAL event_type=proc (http: OR https:)
     | regex clicked_url!="://172\.24\.\d+\.\d+"
     | regex clicked_url!="://162\.128\.\d+\.\d+"
     | regex clicked_url!="://149\.55\.\d+\.\d+"
+    | regex clicked_url!="://127\.0\.\d+\.\d+"
     # exclude CXA server traffic to VIOC/CDE
     | regex clicked_url!="://10\.\d+\.\d+\.\d+"
     # only include legitimate urls (remove servers and pc names)
