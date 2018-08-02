@@ -47,7 +47,7 @@ def search_splunk(config_path, search_path):
         # first run or Exception logged above
         start_time = (datetime.now() - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
     
-    splunk_search_command_text = "/opt/splunklib/splunk.py -i -s '{}' -c '{}' --search-file '{}' --json".format(start_time, config_path, search_path)
+    splunk_search_command_text = "/opt/splunklib/splunk -i -s '{}' -c '{}' --search-file '{}' --json".format(start_time, config_path, search_path)
     try:
         logging.debug("Searching splunk with: '{}'".format(splunk_search_command_text))
         results = subprocess.check_output(['/opt/splunklib/splunk.py', '-i', '-s', start_time, '-c', config_path, '--search-file', search_path, '--json']).decode('utf-8')
