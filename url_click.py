@@ -18,7 +18,7 @@ os.chdir(HOME_DIR)
 # load lib/ onto the python path
 sys.path.append('lib')
 
-from saq.client import Alert
+from ace_client_lib.client import Alert
 from cloudphishlib import cloudphish
 
 ''' TODO: remove subprocess, and use splunklib to perform the splunk search '''
