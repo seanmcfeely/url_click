@@ -15,8 +15,9 @@ CONFIG = None
 HOME_DIR = os.path.realpath(os.path.dirname(__file__))
 os.chdir(HOME_DIR)
 
-# load lib/ onto the python path
+# load ace and  lib/ onto the python path
 sys.path.append('lib')
+sys.path.append('/opt/ace')
 
 from ace_client_lib.client import Alert
 from cloudphishlib import cloudphish
@@ -30,7 +31,7 @@ def search_splunk(config_path, search_path):
     start_time = None
     start_time_file = os.path.join(HOME_DIR, 'var', 'last_search_time')
     if not os.path.exists(os.path.join(start_time_file)):
-        start_time = (datetime.now() - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+        start_time = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
         with open(start_time_file, 'w') as f:
             f.write(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     else:
